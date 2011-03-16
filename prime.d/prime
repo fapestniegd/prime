@@ -1,0 +1,145 @@
+#/bin/bash
+PATH="/bin:/usr/bin:/sbin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+LOG="/var/log/wcyd.log"
+
+usage(){
+    echo "Usage $0 <fully.qualified.domain.nam> [<ldap_secret>]"
+    exit 1;
+}
+
+[ ${UID} -eq 0 ]||echo "Nononononoo. Be you root."
+if [ $# -lt 1 ]; then
+    echo "not enough arguments"
+    usage
+fi
+
+DESIRED_FQDN=$1; 
+SUPPLIED_SECRET=$2; 
+echo "${DESIRED_FQDN}"|grep  "\."
+if [ $? -ne 0 ]; then usage; fi
+hostname "${DESIRED_FQDN}"
+
+########################################################################
+# make sure we've got the latest package list on a apt/yum system...
+########################################################################
+apt-get update >> $LOG 2>&1 || yum update -y >> $LOG 2>&1
+
+####################################
+# Get minimal facts about system   #
+####################################
+HNAME=$(hostname -s)
+FQDN=$(hostname -f)
+
+# Assume the primary interface has the default route on it.
+IFACE=$(route -n|awk -v e='0.0.0.0' '{if(($1==e)&&($2!=e)){print $NF;}}'|head -1)
+IPADDR=$(ifconfig ${IFACE}|grep 'inet addr:'|cut -d: -f2|awk '{ print $1}')
+if [ ${IPADDR} == "127.0.0.1" ];then
+    IPADDR=$(ifconfig | grep 'inet addr:'|cut -d: -f2|awk '{if($1!="127.0.0.1"){print $1}}'| head -1)
+    echo "this looks like openvz, so i'm re-guessing the public ip is ${IPADDR}"
+fi
+[ -z ${IFACE} ]&& ( echo "I cannot determine the public interface"; exit -1)
+[ -z ${IPADDR} ]&& ( echo "I cannot determine my IP address"; exit -1)
+echo "Using ${IPADDR} on ${IFACE} to contact the policy host."
+
+####################################
+# Try to determine the distribution
+####################################
+(apt-get install -y lsb-release || yum install -y redhat-lsb  )>> ${LOG} 2>&1
+DISTRO=$(lsb_release -i | sed -e 's/Distributor ID:[ \t]*//g') 
+
+####################################
+# Set up configuration management
+####################################
+case "${DISTRO}" in
+    Debian)
+        echo "I appear to be running debian."
+        apt-get update >> ${LOG} 2>&1 && apt-get dist-upgrade -y >> ${LOG} 2>&1
+        [ -z $(which dig) ] && apt-get install -y dns-browse >> ${LOG} 2>&1
+        [ -z $(which git) ] && apt-get install -y git-core >> ${LOG} 2>&1
+        [ -z $(which ldapdelete) ] && apt-get install -y ldap-utils >> ${LOG} 2>&1
+        [ -z $(which puppet) ] && apt-get install -y puppet libldap-ruby1.8 >> ${LOG} 2>&1
+        [ ! -f /usr/lib/ruby/1.8/i486-linux/ldap.so ] && apt-get install -y libldap-ruby1.8 >> ${LOG} 2>&1
+        fix_etc_hosts "${DESIRED_FQDN}"
+        fix_etc_hostname
+        fix_etc_mailname
+    ;;
+    CentOS|RedHatEnterpriseServer)
+        echo "I appear to be running redhat."
+        yum clean all -y 
+        yum update -y
+        yum upgrade -y
+        # Need to install git here
+        [ -z $(which dig) ] && yum install -y bind-utils >> ${LOG} 2>&1
+        [ -z $(which puppet) ] && yum install -y puppet >> ${LOG} 2>&1
+        fix_etc_hosts
+        #fix_etc_sysconfig_network
+    ;;
+    *)
+        echo "I don't appear to be running a disribution I support"
+        exit -2;
+    ;;
+esac
+
+####################################
+# kluuuuuuuuudge                   #
+####################################
+wget -qO /usr/local/sbin/testldap "https://gist.github.com/raw/480498/2a780ba2a595a3e56d82ec3977ef20db2552f7af/testldap"
+wget -qO /usr/local/sbin/ldap.conf-init "https//gist.github.com/raw/480498/c9c317ae23a28bbf152d81f3f4580f23b4c9c744/ldap.conf-init"
+chmod 755 /usr/local/sbin/{ldap.conf-init,testldap}
+wget -qO /usr/local/sbin/ldap.conf-init "https//gist.github.com/raw/480498/c9c317ae23a28bbf152d81f3f4580f23b4c9c744/ldap.conf-init"
+
+####################################################
+# Get the ca-cert installed for this domain
+####################################################
+if [ ! -d "/etc/ldap/ssl" ]; then /bin/mkdir -p "/etc/ldap/ssl"; fi
+dig +short -ttxt ca-cert.$(dnsdomainname)|sed -e 's/"//g'|while read url;do
+    if [ ! -f "/etc/ssl/certs/$(dnsdomainname)_trustchain.pem" ];then
+        wget -qO "/etc/ssl/certs/$(dnsdomainname)_trustchain.pem" "${url}"
+    fi
+done
+if [ -f /etc/ssl/certs/$(dnsdomainname)_trustchain.pem ];then
+    (cd /etc/ssl/certs; c_rehash > /dev/null 2>&1)
+fi
+
+if [ ! -h /etc/ldap/ssl/domain_trustchain.pem ];then
+    ln -s /etc/ssl/certs/$(dnsdomainname)_trustchain.pem \
+          /etc/ldap/ssl/domain_trustchain.pem
+fi
+
+if [ ! -h /etc/ssl/certs/domain_trustchain.pem ];then
+    (cd /etc/ssl/certs; ln -s $(dnsdomainname)_trustchain.pem domain_trustchain.pem)
+fi
+
+####################################
+# Save the secret, bind to ldap    #
+####################################
+if [ ! -z ${SUPPLIED_SECRET} ];then
+    # if we were supplied a secret, 
+    # then that's our LDAP password
+    secret-init ${SUPPLIED_SECRET}
+    create_ldaprc                   # for our initial bind
+    ldap.conf-init                  # create our ldap.conf
+    testldap > /dev/null || exit 1  # make sure it works or abort
+    # update our public key (for gitosis-admin/keydir)
+    ldapmodify-sshpublickey
+
+else
+    # if we were NOT supplied a secret, 
+    # then we create a random one
+    secret-init                     # generate a new random one
+    create_ldaprc                   # for our initial bind
+    ldap.conf-init                  # create our ldap.conf
+    # update our new secret and our public key (for gitosis)
+    # since we were not provided a secret, LDAP Administrator's
+    # Credentials will be prompted for to write the record.
+    ldapadd-selfrecord
+    testldap > /dev/null || exit 1  # make sure it works or abort
+fi
+# Refresh the nameservice
+# Need to disable nscd always
+/usr/sbin/nscd -i passwd; /usr/sbin/nscd -i group; /etc/init.d/nscd restart
+# we need to trigger a run of regenerate_gitosis.conf here... but how?
+
+# then we hand off the bootstrap to puppet
+puppet_init
+/usr/local/sbin/pupprun > /var/log/puppet/post-wcyd.log

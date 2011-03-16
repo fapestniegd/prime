@@ -1,0 +1,49 @@
+#/bin/bash
+    if [ ! -d /var/cache/git ]; then mkdir -p /var/cache/git;fi
+    if [ ! -d /root/.ssh ];  then (umask 077; mkdir -p /root/.ssh);fi
+    echo "Downloading Repositories"
+    # This probably isn't needed -->puppetstring isn't on github anymore
+    ssh-keyscan github.com >> /root/.ssh/known_hosts >> ${LOG} 2>&1
+    if [ -d /var/cache/git/puppet-strings ];then
+        (cd /var/cache/git/puppet-strings; git pull)>> ${LOG} 2>&1 
+    else
+        dig +short -ttxt puppet-strings.$(dnsdomainname) | sed -e 's/"//g'| while read repo; do 
+            githost=$(echo $repo | sed -e 's/.*@//' -e 's/:.*//')
+            ssh-keyscan -t rsa,dsa,rsa1 ${githost} >> /root/.ssh/known_hosts
+            if [ ! -d "/var/cache/git/puppet-strings" ];then 
+                (cd /var/cache/git; git clone ${repo})
+            fi; 
+        done
+    fi    
+
+    # Ensure this is a greather than compare not an exactly --> .25.4 
+    # We've switched to puppet 0.25.4, and lenny has 0.24.5 which cannot read the configs for the latter version,
+    if [ "$(/usr/bin/puppet -V)" != "2.6.2" ]; then 
+        if [ -f /var/cache/git/puppet-strings/hosts/puppet-upgrade.pp ]; then
+            puppet --debug --modulepath=/var/cache/git/puppet-strings/modules/ \
+                   /var/cache/git/puppet-strings/hosts/puppet-upgrade.pp \
+                        > /var/log/puppet/upgrade-puppet.log 2>&1
+        
+        fi
+    fi
+    if [ "$(/usr/bin/puppet -V)" != "2.6.2" ]; then 
+        exit -1; # No point in continuing if puppet is just going to puke.
+    fi
+    # Import our facts (in alphabetical order with no collision detection)
+    if [ ! -z "$(ls /var/cache/git/puppet-strings/modules/*/lib/facter 2>/dev/null)" ];then
+        export FACTERLIB=$(find  /var/cache/git/puppet-strings/modules/*/lib/facter -type d | xargs | tr " " ":")
+    fi
+    # Other facts
+    export FACTERLIB=$FACTERLIB:/var/cache/git/puppet-strings/facts
+
+    # Now we can get down to brass tacks...
+    [ -d /var/log/puppet ] ||/bin/mkdir -p /var/log/puppet
+    if [ -f /var/cache/git/puppet-strings/hosts/$(hostname -f).pp ]; then
+        puppet --debug --modulepath=/var/cache/git/puppet-strings/modules/ \
+               /var/cache/git/puppet-strings/hosts/$(hostname -f).pp \
+                    > /var/log/puppet/firstrun.log 2>&1
+    else
+        puppet --debug --modulepath=/var/cache/git/puppet-strings/modules/ \
+               /var/cache/git/puppet-strings/hosts/default.pp \
+                   > /var/log/puppet/firstrun.log 2>&1
+    fi

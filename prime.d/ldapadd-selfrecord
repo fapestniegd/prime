@@ -1,0 +1,252 @@
+#/bin/bash
+    LDIF=$(mktemp /tmp/ldif.XXXX)
+cat<<EOF>${LDIF}
+dn: cn=$(hostname -s),ou=Hosts,dc=$(dnsdomainname|sed -e 's/\./,dc=/g')
+configBase: debian_lenny
+objectClass: configHost
+objectClass: device
+objectClass: ipHost
+objectClass: top
+objectClass: simpleSecurityObject
+objectClass: ldapPublicKey
+cn: $(hostname -s)
+configSet: ldap_client
+EOF
+
+    # insert all the IP addresses
+    for IP in `ifconfig | grep "inet addr:"|sed -e 's/.*inet addr://g' -e 's/ .*//g'|grep -v 127.0.0.1`;do
+    echo "ipHostNumber: ${IP}" >> ${LDIF}
+    done
+    
+    # insert the id_dsa.pub
+    cat /root/.ssh/id_dsa.pub|while read LINE; do
+        ldif_dump "sshPublicKey" "${LINE}" >> ${LDIF}
+    done
+
+    # insert the SSHA password
+    SALT=$(dd if=/dev/random bs=512 count=1 2>/dev/null|md5sum| perl -MMIME::Base64 -ne 'print encode_base64($_)'|cut -b 1-4)
+    PASSWD=$(perl -MDigest::SHA1 -MMIME::Base64 -le '
+                                             $ctx = Digest::SHA1->new; 
+                                             $ctx->add($ARGV[0]); 
+                                             $ctx->add($ARGV[1]); 
+                                             $hashedPasswd = "{SSHA}" . encode_base64($ctx->digest . $ARGV[1] ,""); 
+                                             print $hashedPasswd . "\n";
+                                           ' $(secret) ${SALT}) 
+    ldif_dump "userPassword" "${PASSWD}" >> ${LDIF}
+
+
+    if [ -z ${LDAP_USER} ];then
+        echo -n "Enter LDAP Administrator User Name: (just the uid) " 
+        read LDAP_USER
+    fi
+    if [ -z ${LDAP_PASSWORD} ];then
+        echo -n "Enter LDAP Administrator Password: " 
+        stty -echo
+        read LDAP_PASSWORD
+        stty echo
+    fi
+    ############################################################################
+    # delete the record if it exits and install the new one
+    ############################################################################
+    LDAP_URIS=($(dig +short -tsrv _ldap._tcp.$(dnsdomainname)|awk '{print "ldaps://"$4":"$3}'|sed -e 's/\.:/:/'))
+    RESULT=1; IDX=0;
+    while [ ${RESULT} -ne 0 -a ${IDX} -lt ${#LDAP_URIS[@]} ];do
+    echo "${LDAP_URIS[${IDX}]}"
+    ldapdelete -xH ${LDAP_URIS[${IDX}]}                                                 \
+               -D "uid=${LDAP_USER},ou=People,dc=$(dnsdomainname|sed -e 's/\./,dc=/g')" \
+               -w "${LDAP_PASSWORD}" "cn=$(hostname -s),ou=Hosts,dc=$(dnsdomainname|sed -e 's/\./,dc=/g')" && \
+    ldapadd -xH ${LDAP_URIS[${IDX}]}                                                 \
+            -D "uid=${LDAP_USER},ou=People,dc=$(dnsdomainname|sed -e 's/\./,dc=/g')" \
+            -w "${LDAP_PASSWORD}"                                                    \
+            -f ${LDIF}
+    RESULT=$?
+    IDX=`expr ${IDX} + 1`
+    done
+    cp ${LDIF} /root/$(hostname -s).ldif
+    chmod 600 /root/$(hostname -s).ldif
+    rm ${LDIF}
+
+
+ldapmodify-sshpublickey(){
+    LDIF=$(mktemp /tmp/ldif.XXXX)
+cat<<EOF>${LDIF}
+dn: cn=$(hostname -s),ou=Hosts,dc=$(dnsdomainname|sed -e 's/\./,dc=/g')
+changetype: modify
+replace: sshPublicKey
+EOF
+
+    # insert the id_dsa.pub
+    cat /root/.ssh/id_dsa.pub|while read LINE; do
+        ldif_dump "sshPublicKey" "${LINE}" >> ${LDIF}
+    done
+
+    LDAP_URIS=($(dig +short -tsrv _ldap._tcp.$(dnsdomainname)|sort -nr|awk '{print "ldaps://"$4":"$3}'|sed -e 's/\.:/:/'))
+    RESULT=1; IDX=0;
+    while [ ${RESULT} -ne 0 -a ${IDX} -lt ${#LDAP_URIS[@]} ];do
+        echo "${LDAP_URIS[${IDX}]}"
+        ldapmodify -xH ${LDAP_URIS[${IDX}]}                                                  \
+                   -D "cn=$(hostname -s),ou=Hosts,dc=$(dnsdomainname|sed -e 's/\./,dc=/g')" \
+                   -w "$(secret)" -f ${LDIF}
+        RESULT=$?
+        IDX=`expr ${IDX} + 1`
+    done
+    rm ${LDIF}
+}
+
+####################################################
+# Create our the /root/.ldaprc for our initial bind
+####################################################
+create_ldaprc(){
+cat<<EOF > /root/.ldaprc
+uri $(dig +short -tsrv _ldap._tcp.$(dnsdomainname)|sort -n|\
+    awk '{print "ldaps://"$4":"$3}'|sed -e 's/\.:/:/' | tr '\n' ','|\
+    sed -e 's/,$//' -e 's/,/, /g')
+base dc=$(dnsdomainname|sed -e 's/\./,dc=/g')
+ldap_version 3
+scope sub
+TLS_CACERT /etc/ldap/ssl/domain_trustchain.pem
+TLS_REQCERT allow
+binddn cn=$(hostname -s),ou=Hosts,dc=websages,dc=com
+bindpw $(/usr/local/sbin/secret)
+EOF
+chmod 400 /root/.ldaprc
+}
+
+
+################################################################################
+# main.c, yo                                                                   #
+################################################################################
+
+####################################
+# Some usage validation            #
+####################################
+[ ${UID} -eq 0 ]||echo "Nononononoo. Be you root."
+if [ $# -lt 1 ]; then
+    echo "not enough arguments"
+    usage
+fi
+DESIRED_FQDN=$1; 
+SUPPLIED_SECRET=$2; 
+echo "${DESIRED_FQDN}"|grep  "\."
+if [ $? -ne 0 ]; then usage; fi
+hostname "${DESIRED_FQDN}"
+
+####################################
+# Get minimal facts about system   #
+####################################
+HNAME=$(hostname -s)
+FQDN=$(hostname -f)
+
+# Assume the primary interface has the default route on it.
+IFACE=$(route -n|awk -v e='0.0.0.0' '{if(($1==e)&&($2!=e)){print $NF;}}'|head -1)
+IPADDR=$(ifconfig ${IFACE}|grep 'inet addr:'|cut -d: -f2|awk '{ print $1}')
+if [ ${IPADDR} == "127.0.0.1" ];then
+    IPADDR=$(ifconfig | grep 'inet addr:'|cut -d: -f2|awk '{if($1!="127.0.0.1"){print $1}}'| head -1)
+    echo "this looks like openvz, so i'm re-guessing the public ip is ${IPADDR}"
+fi
+[ -z ${IFACE} ]&& ( echo "I cannot determine the public interface"; exit -1)
+[ -z ${IPADDR} ]&& ( echo "I cannot determine my IP address"; exit -1)
+echo "Using ${IPADDR} on ${IFACE} to contact the policy host."
+
+####################################
+# Try to determine the distribution
+####################################
+(apt-get install -y lsb-release || yum install -y redhat-lsb  )>> ${LOG} 2>&1
+DISTRO=$(lsb_release -i | sed -e 's/Distributor ID:[ \t]*//g') 
+
+####################################
+# Set up configuration management
+####################################
+case "${DISTRO}" in
+    Debian)
+        echo "I appear to be running debian."
+        apt-get update >> ${LOG} 2>&1 && apt-get dist-upgrade -y >> ${LOG} 2>&1
+        [ -z $(which dig) ] && apt-get install -y dns-browse >> ${LOG} 2>&1
+        [ -z $(which git) ] && apt-get install -y git-core >> ${LOG} 2>&1
+        [ -z $(which ldapdelete) ] && apt-get install -y ldap-utils >> ${LOG} 2>&1
+        [ -z $(which puppet) ] && apt-get install -y puppet libldap-ruby1.8 >> ${LOG} 2>&1
+        [ ! -f /usr/lib/ruby/1.8/i486-linux/ldap.so ] && apt-get install -y libldap-ruby1.8 >> ${LOG} 2>&1
+        fix_etc_hosts "${DESIRED_FQDN}"
+        fix_etc_hostname
+        fix_etc_mailname
+    ;;
+    CentOS|RedHatEnterpriseServer)
+        echo "I appear to be running redhat."
+        yum clean all -y 
+        yum update -y
+        yum upgrade -y
+        # Need to install git here
+        [ -z $(which dig) ] && yum install -y bind-utils >> ${LOG} 2>&1
+        [ -z $(which puppet) ] && yum install -y puppet >> ${LOG} 2>&1
+        fix_etc_hosts
+        #fix_etc_sysconfig_network
+    ;;
+    *)
+        echo "I don't appear to be running a disribution I support"
+        exit -2;
+    ;;
+esac
+
+####################################
+# kluuuuuuuuudge                   #
+####################################
+wget -qO /usr/local/sbin/testldap "https://gist.github.com/raw/480498/2a780ba2a595a3e56d82ec3977ef20db2552f7af/testldap"
+wget -qO /usr/local/sbin/ldap.conf-init "https//gist.github.com/raw/480498/c9c317ae23a28bbf152d81f3f4580f23b4c9c744/ldap.conf-init"
+chmod 755 /usr/local/sbin/{ldap.conf-init,testldap}
+wget -qO /usr/local/sbin/ldap.conf-init "https//gist.github.com/raw/480498/c9c317ae23a28bbf152d81f3f4580f23b4c9c744/ldap.conf-init"
+
+####################################################
+# Get the ca-cert installed for this domain
+####################################################
+if [ ! -d "/etc/ldap/ssl" ]; then /bin/mkdir -p "/etc/ldap/ssl"; fi
+dig +short -ttxt ca-cert.$(dnsdomainname)|sed -e 's/"//g'|while read url;do
+    if [ ! -f "/etc/ssl/certs/$(dnsdomainname)_trustchain.pem" ];then
+        wget -qO "/etc/ssl/certs/$(dnsdomainname)_trustchain.pem" "${url}"
+    fi
+done
+if [ -f /etc/ssl/certs/$(dnsdomainname)_trustchain.pem ];then
+    (cd /etc/ssl/certs; c_rehash > /dev/null 2>&1)
+fi
+
+if [ ! -h /etc/ldap/ssl/domain_trustchain.pem ];then
+    ln -s /etc/ssl/certs/$(dnsdomainname)_trustchain.pem \
+          /etc/ldap/ssl/domain_trustchain.pem
+fi
+
+if [ ! -h /etc/ssl/certs/domain_trustchain.pem ];then
+    (cd /etc/ssl/certs; ln -s $(dnsdomainname)_trustchain.pem domain_trustchain.pem)
+fi
+
+####################################
+# Save the secret, bind to ldap    #
+####################################
+if [ ! -z ${SUPPLIED_SECRET} ];then
+    # if we were supplied a secret, 
+    # then that's our LDAP password
+    secret-init ${SUPPLIED_SECRET}
+    create_ldaprc                   # for our initial bind
+    ldap.conf-init                  # create our ldap.conf
+    testldap > /dev/null || exit 1  # make sure it works or abort
+    # update our public key (for gitosis-admin/keydir)
+    ldapmodify-sshpublickey
+
+else
+    # if we were NOT supplied a secret, 
+    # then we create a random one
+    secret-init                     # generate a new random one
+    create_ldaprc                   # for our initial bind
+    ldap.conf-init                  # create our ldap.conf
+    # update our new secret and our public key (for gitosis)
+    # since we were not provided a secret, LDAP Administrator's
+    # Credentials will be prompted for to write the record.
+    ldapadd-selfrecord
+    testldap > /dev/null || exit 1  # make sure it works or abort
+fi
+# Refresh the nameservice
+# Need to disable nscd always
+/usr/sbin/nscd -i passwd; /usr/sbin/nscd -i group; /etc/init.d/nscd restart
+# we need to trigger a run of regenerate_gitosis.conf here... but how?
+
+# then we hand off the bootstrap to puppet
+puppet_init
+/usr/local/sbin/pupprun > /var/log/puppet/post-wcyd.log
