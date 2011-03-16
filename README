@@ -1,0 +1,24 @@
+This script should prepare a host for an initial run of puppet. 
+It's made to be run on hosts with absolutely no configuration.
+
+Usage: prime vili.example.com LD@P_S3cr3t
+
+It assumes that there is an LDAP Server "out there" that may be found with a SRV record for one of:
+
+  _ldap._ssl.example.com
+  _ldap._tls.example.com
+  _ldap._tcp.example.com
+
+(example.com should be replaced by your domain)
+
+It also assumes there is a cn=vili,ou=Hosts,dc=example,dc=com distinguished name on those LDAP servers with
+a simpleSecurityObject objectclass, and the userPassword for the DN is LD@P_S3cr3t.
+
+Basically, it's a a way of passing your host a LDAP password it can use for secure authentication/authorization
+actions in a non-secure network.
+
+It "primes" your host for your infrastructure.
+
+It will:
+
+1) Set the hostname on the host to the first argument (vili.example.com)
