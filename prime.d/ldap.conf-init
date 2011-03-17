@@ -1,0 +1,122 @@
+#!/bin/bash
+################################################################################
+# using this host's credentials, look up the (yes, plaintext) userpassword for
+# cn=LDAP Anonymous,ou=Special,dc=websages,dc=com, to which all members or
+# ou=Hosts have read (ACL in /etc/ldap/slapd/domains/${f.q.d.n}_slapd.conf)
+# so that we can put it in the global ldap.conf, such that we can disable 
+# "true" anonymous binds, but getent will work for everyone, because the
+# /etc/ldap.secret won't have to exist and be mode 0600
+################################################################################
+export PATH="/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin"
+logexit(){
+   EXIT=$1
+   WHY=$2
+   [ -z "${WHY}" ] && WHY="no reason specified"
+   echo "$0 exited ${EXIT} last time because ${WHY}." >> /var/log/logexit.log
+   exit ${EXIT}
+}
+
+grep "^binddn cn=LDAP Anonymous" /etc/ldap/ldap.conf >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+    if [ -x /usr/local/sbin/testldap ]; then
+        /usr/local/sbin/testldap && exit 0
+    fi
+fi
+
+if [ ! -x /usr/local/sbin/secret ]; then
+    logexit 1 "/usr/local/sbin/secret not executable"
+fi
+
+SECRET=$(/usr/local/sbin/secret)
+
+if [ -z "$(dnsdomainname)" ] ;then
+    logexit 1 "cannot determine dns domain name"
+fi
+
+if [ -z "$(hostname -s)" ]; then
+    logexit 1 "cannot determine short host name"
+fi
+
+URI=$(
+    for h in `dig +short -tsrv _ldap._tcp.$(dnsdomainname)|awk '{print $NF}'|sed -e 's/\.$//'`;do
+        echo "$(traceroute ${h}|grep -v '* * *'|tail -1 |awk '{print $1}') ${h}"
+    done | sort -n | awk '{if($2!=""){print " ldaps://"$2":636,"}}' | tr '\n' ' '|sed -e 's/, *$//'; 
+)
+
+if [ -z "${URI}" ] ;then
+     logexit 1 "could not get URIs"
+fi
+
+BASEDN="dc=$(dnsdomainname|sed -e 's/\./,dc=/g')"
+HOST=$(hostname -s)
+SECRET=$(/usr/local/sbin/secret)
+export URI BASEDN HOST SECRET
+
+################################################################################
+# get the anonymous password from ldap, and transform from mime if necessary   #
+ANONPASS=$(
+            ldapsearch -xLH "$URI"  \
+                       -b "${BASEDN}" \
+                       -D "cn=${HOST},ou=Hosts,${BASEDN}" \
+                       -w "${SECRET}" "(cn=LDAP Anonymous)" | \
+                 tr "\n" ''| sed -e 's/ //g' | tr '' "\n" | grep -i userpassword
+          )
+
+echo ${ANONPASS} | grep -qi "userPassword:: " && \
+    ANONPASS=$(
+                echo ${ANONPASS}|awk '{print $2}'|  \
+                perl -MMIME::Base64 -le ' 
+                                          while(chomp($line=<STDIN>)){ 
+                                                                       $key=decode_base64($line); 
+                                                                       chomp($key); 
+                                                                       print $key;
+                                                                      }
+                                        '
+              ) || \
+    ANONPASS=$( echo ${ANONPASS} |awk '{print $2}' )
+################################################################################
+if [ -z ${ANONPASS} ];then 
+    logexit 1 "cannot retrieve the anonymous password"
+fi
+
+if [ -z ${ANONPASS} ];then 
+    logexit 1 "cannot retrieve the anonymous password"
+fi
+
+cat<<EOF > /etc/ldap/ldap.conf.new
+uri ${URI}
+base ${BASEDN}
+ldap_version 3
+scope sub
+TLS_CACERT /etc/ldap/ssl/domain_trustchain.pem
+# sudo-ldap uses this one but not the one above... ugh
+TLS_CACERTFILE /etc/ldap/ssl/domain_trustchain.pem
+TLS_REQCERT allow
+binddn cn=LDAP Anonymous,ou=Special,${BASEDN}
+bindpw ${ANONPASS}
+pam_filter objectclass=posixAccount
+pam_login_attribute uid
+pam_crypt local
+pam_password md5
+sudoers_base ou=sudoers,${BASEDN}
+#sudoers_debug 5
+ssl yes
+EOF
+
+if [ -f /etc/ldap/ldap.conf.new ];then
+    grep ${ANONPASS} /etc/ldap/ldap.conf.new > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        logexit 1 "anonymous password is not in new file"
+    fi
+fi
+
+
+OLD=$(md5sum /etc/ldap/ldap.conf|awk '{print $1}')
+NEW=$(md5sum /etc/ldap/ldap.conf.new|awk '{print $1}')
+
+if [ "${NEW}" != "${OLD}" ]; then
+   /bin/cp /etc/ldap/ldap.conf.new /etc/ldap/ldap.conf
+   chmod 444 /etc/ldap/ldap.conf
+fi
+
+logexit 0 "everything looks good"

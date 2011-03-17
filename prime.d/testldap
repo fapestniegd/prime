@@ -1,0 +1,46 @@
+#!/bin/bash
+################################################################################
+# This is a test for both the host credentials and the anonymous credentials
+################################################################################
+export PATH="/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin"
+LDAP_URIS=($(dig +short -tsrv _ldap._tcp.$(dnsdomainname)|awk '{print "ldaps://"$4":"$3}'|sed -e 's/\.:/:/'))
+
+anon-passwd(){
+    RESULT=1; IDX=0;
+    while [ ${RESULT} -ne 0 -a ${IDX} -lt ${#LDAP_URIS[@]} ];do
+    ANON_PASS=$(
+                ldapsearch -xH ${LDAP_URIS[${IDX}]}                                       \
+                            -b "ou=Special,dc=websages,dc=com"                            \
+                            -D "cn=$(hostname -s),ou=Hosts,dc=websages,dc=com"            \
+                            -w $(secret) -s sub "(cn=LDAP Anonymous)" |                   \
+                            tr "\n" ''| sed -e 's/ //g' | tr '' "\n" |              \
+                            sed -e 's/#.*//g' | grep "^userPassword" | awk '{print $2}' | \
+                            perl -MMIME::Base64 -le '
+                                                     while(chomp($line=<STDIN>)){
+                                                                                  $key=decode_base64($line);
+                                                                                  chomp($key);
+                                                                                  print $key;
+                                                                                }
+                                                    '
+               export RESULT=$?
+               )
+    IDX=`expr ${IDX} + 1`
+    done
+    echo ${ANON_PASS}
+}
+
+ldap-bind(){
+    RESULT=1; IDX=0;
+    while [ ${RESULT} -ne 0 -a ${IDX} -lt ${#LDAP_URIS[@]} ];do
+    ldapsearch -xH ${LDAP_URIS[${IDX}]}                                                 \
+               -b "dc=$(dnsdomainname|sed -e 's/\./,dc=/g')"                            \
+               -D "cn=LDAP Anonymous,ou=Special,dc=$(dnsdomainname|sed -e 's/\./,dc=/g')" \
+               -w "$(anon-passwd)" "(cn=$(hostname -s))"
+    RESULT=$?
+    IDX=`expr ${IDX} + 1`
+    done
+    return ${RESULT}
+}
+
+ldap-bind > /dev/null 2>&1
+exit $?

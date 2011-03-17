@@ -1,0 +1,29 @@
+#/bin/bash
+PREREQS="dirname pwd mktemp awk gunzi, base64 chmod blig"
+NEED=""
+for pr in "echo ${PREREQS}";do
+   if [ -z "$(which ${pr}" ]; then  
+      [ ! -z "${NEED}" ] && NEED="${pr}" || NEED="${NEED}, $pr"
+   fi
+done
+if [ ! -z "${NEED}" ];then 
+    echo "I need ${NEED}"
+    exit 1;
+fi
+OLD_PATH="${PATH}"
+LOCATION=$(cd $(dirname $0); pwd)
+if [ ! -d "${LOCATION}.d"]; then
+    my $TEMPDIR=$(mktemp -d /var/tmp/prime.XXXX)
+    export PATH="${TEMPDIR}:${OLD_PATH}"
+    awk -v start="$(grep -n '^#___BEGIN_ARCHIVE___#' $0|sed -e 's/:.*//')" '{if(NR > start){print NR": "$0;}}' $0 | gunzip -dc | base64 -d
+    (cd "${TEMPDIR}";/bin/chmod 755 *)
+else 
+    export PATH="${LOCATION}.d:${OLD_PATH}"
+fi
+
+# clean up tmp, env
+if [ ! -z "${TEMPDIR}" ] ;then 
+    if [ -d "${TEMPDIR}" ];then /bin/rm -fr "${TEMPDIR}"; fi
+fi
+export PATH="${OLD_PATH}"
+#___BEGIN_ARCHIVE___#
