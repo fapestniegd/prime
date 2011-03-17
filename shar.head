@@ -34,7 +34,7 @@ if [ "${FILE_LENGTH}" -gt "${ARCHIVE_BEGINS}" ]; then
 fi
 
 # start our scripts (the entry point will be named after this one)
-${TMPDIR}/$(basename $0)
+${TMPDIR}/$(basename $0) $*
 echo "$(basename $0) exit was $?"
 
 ########################################
