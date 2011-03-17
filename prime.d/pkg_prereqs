@@ -37,19 +37,23 @@ case "${DISTRO}" in
     CentOS|RedHatEnterpriseServer)
         echo "I appear to be running redhat."
         HAVE_ALL=0;
-        for pkg in $(echo "bind-utils openssl-perl epel-release puppet-server"); do 
+        for pkg in $(echo "bind-utils openssl-perl openldap-clients epel-release puppet-server openldap-clients perl-Digest-SHA1 git ruby-ldap");do 
             rpm -qa | grep -q "${pkg}" || HAVE_ALL=1
         done
         # Need to install git here
         if [ ${HAVE_ALL} -ne 0 ]; then
-            [ -z $(which dig) ] && yum install -y bind-utils >> ${LOG} 2>&1
-            rpm -qa | grep epel-release
+            rpm -qa | grep -q "^epel-release"
             if [ $? -ne 0 ];then
                 rpm -Uvh http://download.fedora.redhat.com/pub/epel/5/i386/epel-release-5-4.noarch.rpm
                 yum clean all -y ; yum list available
             fi
-            [ -z $(which puppet) ] && yum install -y puppet-server >> ${LOG} 2>&1
-            rpm -qa | grep -q "^openssl-perl" || yum install -y openssl-perl >> ${LOG} 2>&1
+            rpm -qa | grep -q "^bind-utils"      || yum install -y bind-utils       >> ${LOG} 2>&1
+            rpm -qa | grep -q "^puppet-server"   || yum install -y puppet-server    >> ${LOG} 2>&1
+            rpm -qa | grep -q "^openssl-perl"    || yum install -y openssl-perl     >> ${LOG} 2>&1
+            rpm -qa | grep -q "^openldap-clients"|| yum install -y openldap-clients >> ${LOG} 2>&1
+            rpm -qa | grep -q "^perl-Digest-SHA1"|| yum install -y perl-Digest-SHA1 >> ${LOG} 2>&1
+            rpm -qa | grep -q "^git"             || yum install -y git              >> ${LOG} 2>&1
+            rpm -qa | grep -q "^ruby-ldap"       || yum install -y ruby-ldap        >> ${LOG} 2>&1
         fi
     ;;
     *)

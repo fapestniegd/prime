@@ -1,14 +1,14 @@
 #/bin/bash
 NAME=$1
 VALUE=$2
-    MIMELINE=$(perl -MMIME::Base64 -le 'print "$ARGV[0]::".encode_base64($ARGV[1]);' "${NAME}" "${VALUE}"|tr '\n' ' '|sed -e 's/ //g' -e 's/::/:: /';)
+MIMELINE=$(perl -MMIME::Base64 -le 'print "$ARGV[0]::".encode_base64($ARGV[1]);' "${NAME}" "${VALUE}"|tr '\n' ' '|sed -e 's/ //g' -e 's/::/:: /';)
+LENGTH=$(echo -n "${MIMELINE}" | wc -c)
+CHUNK=$(echo "${MIMELINE}"|cut -b 1-78)
+echo ${CHUNK}
+MIMELINE=$(echo ${MIMELINE}|sed -e "s/^${CHUNK}//")
+while [ ${LENGTH} -gt 0 ];do
+    CHUNK=$(echo "${MIMELINE}"|cut -b 1-77)
+    echo " ${CHUNK}"
+    MIMELINE=$(echo "${MIMELINE}"|sed -e "s/^${CHUNK}//")
     LENGTH=$(echo -n "${MIMELINE}" | wc -c)
-    CHUNK=$(echo "${MIMELINE}"|cut -b 1-78)
-    echo ${CHUNK}
-    MIMELINE=$(echo ${MIMELINE}|sed -e "s/^${CHUNK}//")
-    while [ ${LENGTH} -gt 0 ];do
-        CHUNK=$(echo "${MIMELINE}"|cut -b 1-77)
-        echo " ${CHUNK}"
-        MIMELINE=$(echo "${MIMELINE}"|sed -e "s/^${CHUNK}//")
-        LENGTH=$(echo -n "${MIMELINE}" | wc -c)
-    done
+done

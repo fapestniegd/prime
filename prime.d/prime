@@ -70,53 +70,49 @@ fi
 # set the secret
 #
 if [ ! -z ${SUPPLIED_SECRET} ];then
-env LOG="${LOG}" PATH="${PATH}" secret-init ${SUPPLIED_SECRET}
+    env LOG="${LOG}" PATH="${PATH}" secret_init ${SUPPLIED_SECRET}
 else 
-    secret-init                     # generate a new random one
+    env LOG="${LOG}" PATH="${PATH}" secret_init # generate a new random one
 fi
 if [ -z "$(secret)" ]; then 
     echo "Unable to create the secret. Cannot continue."
     exit 1;
 fi
-exit $? 
 
 ################################################################################
-# Set up root's .ldaprc to bind as cn=$(hosname -s)
+# Set up root's .ldaprc to bind as cn=$(hosname -s), and get cn=LDAP Anonymous'
+# credentials to write out the /etc/ldap/ldap.conf, then use that to bind to 
+# LDAP
 #
 create_ldaprc
-
-################################################################################
-# 
-#
 create_ldap.conf
-
-################################################################################
-# test that we can bind to LDAP
-#
 testldap > /dev/null
-
+if [ $? -ne 0 ]; then 
+    echo "LDAP Operations failed. Cannot continue."
+    exit 1;
+fi
 
 ################################################################################
-# update our ldap record
+# update our ldap record with our ssh public key
 #
-ldapmodify-sshpublickey
-ldapadd-selfrecord
+ldapmodify-sshpubkey
+if [ $? -ne 0 ]; then 
+    echo "LDAP sshPublicKey modification Failed. Continuing..."
+fi
 
 ################################################################################
-# test that we can bind to LDAP after modification
+# if we don't have an ldap record, this script will create one, but it breaks
+# the non-interactive install by prompting for an ldap administrators credentials
 #
-testldap > /dev/null || exit 1  # make sure it works or abort
-
-################################################################################
-# Refresh the nameservice switcher
-/usr/sbin/nscd -i passwd; /usr/sbin/nscd -i group; /etc/init.d/nscd restart
+# ldapadd-selfrecord
 
 ################################################################################
 # install the latest version of puppet
-puppet_init
+env LOG="${LOG}" PATH="${PATH}" puppet_init
 
 ################################################################################
 # then we hand off the bootstrap to puppet
+install -m 0755 $(dirname $0)/pupprun /usr/local/sbin/pupprun
 /usr/local/sbin/pupprun >> $LOG 2>&1 &
 
 exit 0

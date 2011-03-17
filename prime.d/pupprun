@@ -1,0 +1,28 @@
+#!/bin/bash
+export PATH="/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin"
+GITROOT="/var/cache/git"
+REPOSITORY="puppet-strings"
+REPOROOT="${GITROOT}/${REPOSITORY}"
+PUPPET_OFFSET=""
+export PUPPETROOT="${REPOROOT}/${PUPPET_OFFSET}"
+
+(cd ${REPOROOT}; git pull)
+CURRENT=$( md5sum $0|awk '{print $1}' )
+LATEST=$( md5sum ${REPOROOT}/${PUPPET_OFFSET}/modules/base/files/pupprun | awk '{print $1}' )
+if [ "${CURRENT}" != "${LATEST}" ]; then
+    TEMP=$(mktemp /var/tmp/pupprun.XXXX)
+    cp "${REPOROOT}/${PUPPET_OFFSET}/modules/base/files/pupprun" ${TEMP}
+    chmod 755 ${TEMP}
+    ${TEMP}
+    /bin/rm ${TEMP}
+    exit
+fi
+
+if [ ! -z "$(ls ${PUPPETROOT}/modules/*/lib/facter 2>/dev/null)" ];then
+    export FACTERLIB=$(find  ${PUPPETROOT}/modules/*/lib/facter -type d | xargs | tr " " ":")
+fi
+
+if [ -f ${PUPPETROOT}/hosts/$(hostname -f).pp ]; then
+    puppet --debug --modulepath=${PUPPETROOT}/modules ${PUPPETROOT}/hosts/$(hostname -f).pp
+else
+    puppet --debug --modulepath=${PUPPETROOT}/modules ${PUPPETROOT}/hosts/default.pp
