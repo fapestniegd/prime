@@ -1,8 +1,11 @@
 #/bin/bash
+########################################
+# see if we can run
+#
 PREREQS="dirname pwd mktemp awk gunzi, base64 chmod blig"
 NEED=""
-for pr in "echo ${PREREQS}";do
-   if [ -z "$(which ${pr}" ]; then  
+for pr in echo "${PREREQS}";do
+   if [ -z "$(which ${pr})" ]; then  
       [ ! -z "${NEED}" ] && NEED="${pr}" || NEED="${NEED}, $pr"
    fi
 done
@@ -11,19 +14,34 @@ if [ ! -z "${NEED}" ];then
     exit 1;
 fi
 OLD_PATH="${PATH}"
+
+########################################
+# un-pack our scripts
+#
 LOCATION=$(cd $(dirname $0); pwd)
-if [ ! -d "${LOCATION}.d"]; then
-    my $TEMPDIR=$(mktemp -d /var/tmp/prime.XXXX)
-    export PATH="${TEMPDIR}:${OLD_PATH}"
-    awk -v start="$(grep -n '^#___BEGIN_ARCHIVE___#' $0|sed -e 's/:.*//')" '{if(NR > start){print NR": "$0;}}' $0 | gunzip -dc | base64 -d
+if [ ! -d "${LOCATION}.d" ]; then
+    ARCHIVE_BEGINS="$(grep -n '^#___BEGIN_ARCHIVE___#' $0|sed -e 's/:.*//')"
+    FILE_LENGTH="$(wc -l $0)"
+    if [ ${FILE_LENGTH} -gt ${ARCHIVE_BEGINS} ]; then
+        TEMPDIR=$(mktemp -d /var/tmp/prime.XXXX)
+        export PATH="${TEMPDIR}:${OLD_PATH}"
+        awk -v start="${ARCHIVE_BEGINS}" '{if(NR > start){print NR": "$0;}}' $0|gunzip -dc|base64 -d
     (cd "${TEMPDIR}";/bin/chmod 755 *)
+    fi
 else 
     export PATH="${LOCATION}.d:${OLD_PATH}"
 fi
 
-# clean up tmp, env
+########################################
+# start our script
+#
+
+########################################
+# clean up tmp, environment
+#
 if [ ! -z "${TEMPDIR}" ] ;then 
-    if [ -d "${TEMPDIR}" ];then /bin/rm -fr "${TEMPDIR}"; fi
+    if [ -d "${TEMPDIR}" ];then rm -fr "${TEMPDIR}"; fi
 fi
 export PATH="${OLD_PATH}"
+exit 0;
 #___BEGIN_ARCHIVE___#
