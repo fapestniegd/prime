@@ -1,8 +1,0 @@
-#/bin/bash
-    echo "rewriting /etc/hostname"
-    FQDN=$(hostname -f);
-    if [ ! -z "${FQDN}" ]; then
-        echo "${FQDN}" > /etc/hostname
-    else
-        echo "unable to determine host name in fix_etc_hostname.";
-    fi

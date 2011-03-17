@@ -1,0 +1,73 @@
+#/bin/bash
+IPADDR=$(routing_ipaddress)
+if [ -f /etc/.new_etc_hosts ];then rm /etc/.new_etc_hosts;fi
+
+########################################
+# /etc/hosts fixups
+# 
+echo "rewriting /etc/hosts"
+HNAME=$(hostname -s)
+FQDN=$(hostname -f)
+########################################
+# Ensure there is a localhost line
+# 127.0.0.1 localhost.localdomain localhost
+#
+LOCAL=$(grep "127.0.0.1" /etc/hosts| head -1)
+if [ ! -z "${LOCAL}" ];then 
+    echo "${LOCAL}"|grep -q "127.0.0.1 *localhost.localdomain *localhost" || \
+    LOCAL=$(echo ${LOCAL}|sed -e 's/127.0.0.1.*/127.0.0.1 localhost.localdomain localhost/')
+else
+    LOCAL="127.0.0.1 localhost.localdomain localhost" 
+fi
+
+########################################
+# Ensure there is a routing interface entry
+#
+PUBLIC=$(grep "${IPADDR}" /etc/hosts)
+if [ ! -z "${PUBLIC}" ];then 
+    echo "${PUBLIC}"|grep -q "${IPADDR} *${FQDN} *${HNAME}"||\
+        PUBLIC=$(echo "${PUBLIC}"| sed -e "s/${IPADDR}.*/${IPADDR} ${FQDN} ${HNAME}/")
+else
+    PUBLIC="${IPADDR} ${FQDN} ${HNAME}"
+fi
+
+echo "${LOCAL}" > /etc/.new_etc_hosts
+echo "${PUBLIC}" >> /etc/.new_etc_hosts
+sed -e "s/127.0.0.1.*//" -e "s/${IPADDR}.*//" /etc/hosts |grep .>> /etc/.new_etc_hosts
+if [ ! -f /etc/hosts.dists ];then mv /etc/hosts /etc/hosts.dist;fi
+mv /etc/.new_etc_hosts /etc/hosts
+
+########################################
+# Distribution specific fixups
+#
+DISTRO=$(lsb_release -i | sed -e 's/Distributor ID:[ \t]*//g') 
+case "${DISTRO}" in
+    Debian)
+        echo "rewriting /etc/hostname"
+        FQDN=$(hostname -f);
+        if [ ! -z "${FQDN}" ]; then
+            echo "${FQDN}" > /etc/hostname
+        else
+            echo "unable to determine host name in fix_etc_files.";
+        fi
+        echo "rewriting /etc/mailname"
+        DOMAIN=$(dnsdomainname)
+        if [ ! -z "${DOMAIN}" ]; then
+            HNAME=$(hostname -s);
+            FQDN=$(hostname -f);
+            DOMAIN=$(echo $FQDN|sed -e "s/${HNAME}\.//")
+        fi
+        if [ ! -z "${DOMAIN}" ]; then
+            echo "Setting mail name to ${DOMAIN}";
+            echo "${DOMAIN}" > /etc/mailname
+        else
+            echo "unable to determine domain name in fix_etc_mailname.";
+            exit -1;
+        fi
+    ;;
+    CentOS|RedHatEnterpriseServer)
+    ;;
+    *)
+    exit 0;
+    ;;
+esac

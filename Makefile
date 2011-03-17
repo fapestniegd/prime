@@ -1,5 +1,8 @@
-all: prime.d shar.head
-	(cat shar.head ;cd prime.d;tar czf - *|base64) > prime
+doit: clear clean all install
+clear: 
+	clear
+all: prime.d __header
+	(cat __header ;cd prime.d;tar czf - *|base64) > prime
 	chmod 755 prime
 clean: 
 	if [ -f prime ]; then /bin/rm prime; fi

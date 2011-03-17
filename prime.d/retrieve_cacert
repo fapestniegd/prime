@@ -2,21 +2,41 @@
 ####################################################
 # Get the ca-cert installed for this domain
 ####################################################
+DISTRO=$(lsb_release -i | sed -e 's/Distributor ID:[ \t]*//g')
+case "${DISTRO}" in
+    Debian)
+        export CERT_ROOT="/etc/ssl"
+    ;;
+    CentOS|RedHatEnterpriseServer)
+        export CERT_ROOT="/etc/pki/tls"
+    ;;
+    *)
+    exit 0;
+    ;;
+esac
+
 if [ ! -d "/etc/ldap/ssl" ]; then /bin/mkdir -p "/etc/ldap/ssl"; fi
+
 dig +short -ttxt ca-cert.$(dnsdomainname)|sed -e 's/"//g'|while read url;do
-    if [ ! -f "/etc/ssl/certs/$(dnsdomainname)_trustchain.pem" ];then
-        wget -qO "/etc/ssl/certs/$(dnsdomainname)_trustchain.pem" "${url}"
+    if [ ! -f "${CERT_ROOT}/certs/$(dnsdomainname)_trustchain.pem" ];then
+        wget -qO "${CERT_ROOT}/certs/$(dnsdomainname)_trustchain.pem" "${url}"
     fi
 done
-if [ -f /etc/ssl/certs/$(dnsdomainname)_trustchain.pem ];then
-    (cd /etc/ssl/certs; c_rehash > /dev/null 2>&1)
+
+if [ -f ${CERT_ROOT}/certs/$(dnsdomainname)_trustchain.pem ];then
+    (cd ${CERT_ROOT}/certs; c_rehash > /dev/null 2>&1)
 fi
 
 if [ ! -h /etc/ldap/ssl/domain_trustchain.pem ];then
-    ln -s /etc/ssl/certs/$(dnsdomainname)_trustchain.pem \
+    ln -s ${CERT_ROOT}/certs/$(dnsdomainname)_trustchain.pem \
           /etc/ldap/ssl/domain_trustchain.pem
 fi
-
-if [ ! -h /etc/ssl/certs/domain_trustchain.pem ];then
-    (cd /etc/ssl/certs; ln -s $(dnsdomainname)_trustchain.pem domain_trustchain.pem)
+if [ ! -h ${CERT_ROOT}/certs/domain_trustchain.pem ];then
+    (cd ${CERT_ROOT}/certs; ln -s $(dnsdomainname)_trustchain.pem domain_trustchain.pem)
 fi
+
+[ ! -f ${CERT_ROOT}/certs/$(dnsdomainname)_trustchain.pem ] && exit 1
+[ ! -h ${CERT_ROOT}/certs/domain_trustchain.pem ] && exit 1
+[ ! -h /etc/ldap/ssl/domain_trustchain.pem ] && exit 1;
+
+exit 0;

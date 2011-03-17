@@ -42,25 +42,25 @@ if [ $? -ne 0 ]; then
     echo "unable to set hostname. cannot continue..."
     exit 1
 fi
-exit 0
-################################################################################
-# fix etc files
-#
-fix_etc_files
 
 ################################################################################
 # Install what we need to continue.
 #
-pkg_prereqs
+env LOG="${LOG}" PATH="${PATH}" pkg_prereqs
 if [ $? -ne 0 ]; then 
     echo "unalbe to install required packages"
     exit 1;
 fi
 
 ################################################################################
+# fix etc files
+#
+env LOG="${LOG}" PATH="${PATH}" fix_etc_files
+
+################################################################################
 # retrive the certificate tree
 #
-retrieve_cacert
+env LOG="${LOG}" PATH="${PATH}" retrieve_cacert
 if [ $? -ne 0 ]; then 
     echo "Unable to retrieve the CA Certificate tree. Cannot continue."
     exit 1;
@@ -70,7 +70,7 @@ fi
 # set the secret
 #
 if [ ! -z ${SUPPLIED_SECRET} ];then
-    secret-init ${SUPPLIED_SECRET}
+env LOG="${LOG}" PATH="${PATH}" secret-init ${SUPPLIED_SECRET}
 else 
     secret-init                     # generate a new random one
 fi
@@ -78,14 +78,15 @@ if [ -z "$(secret)" ]; then
     echo "Unable to create the secret. Cannot continue."
     exit 1;
 fi
+exit $? 
 
 ################################################################################
-# Set up root's .ldaprc to get anon user credenitals
+# Set up root's .ldaprc to bind as cn=$(hosname -s)
 #
 create_ldaprc
 
 ################################################################################
-# Set up global ldap.conf with anon user
+# 
 #
 create_ldap.conf
 
