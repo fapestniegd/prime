@@ -1,0 +1,2 @@
+#/bin/bash
+ifconfig $(routing_interface)|grep 'inet addr:'|cut -d: -f2|awk '{ print $1}'

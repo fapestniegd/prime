@@ -29,7 +29,9 @@ if [ "${FILE_LENGTH}" -gt "${ARCHIVE_BEGINS}" ]; then
     TEMPDIR=$(mktemp -d /var/tmp/prime.XXXX)
     OLD_PATH="${PATH}"
     export PATH="${TEMPDIR}:${OLD_PATH}"
-    awk -v start="${ARCHIVE_BEGINS}" '{if(NR > start){print NR": "$0;}}' $0|gunzip -dc|base64 -d
+    awk -v start="${ARCHIVE_BEGINS}" '{if(NR > start){print $0;}}' $0
+exit 0
+#|base64 -d|tar -C "${TEMPDIR}" -xzf -
     (cd "${TEMPDIR}";/bin/chmod 755 *)
 fi
 

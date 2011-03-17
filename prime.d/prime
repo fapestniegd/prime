@@ -42,6 +42,11 @@ if [ $? -ne 0 ]; then
     echo "unable to set hostname. cannot continue..."
     exit 1
 fi
+exit 0
+################################################################################
+# fix etc files
+#
+fix_etc_files
 
 ################################################################################
 # Install what we need to continue.

@@ -1,0 +1,10 @@
+#/bin/bash
+########################################################################
+# make sure we've got the latest package list on a apt/yum system...
+########################################################################
+if [ ! -z $(which apt-get 2>/dev/null) ];then 
+    (apt-get update) >> $LOG 2>&1
+fi
+if [ ! -z $(which yum 2>/dev/null) ]; then
+    (yum clean all; yum list available >/dev/null) >> $LOG 2>&1
+fi
