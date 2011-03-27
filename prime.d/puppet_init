@@ -34,6 +34,20 @@ fi
 if [ ! -z "$(ls /var/cache/git/puppet-strings/modules/*/lib/facter 2>/dev/null)" ];then
     export FACTERLIB=$(find  /var/cache/git/puppet-strings/modules/*/lib/facter -type d | xargs | tr " " ":")
 fi
+
+# Debian 6 facter fixups
+if [ -f /etc/debian_version ];then
+    grep -q "^6" /etc/debian_version
+    if [ $? -eq 0 ];then
+        /usr/bin/gpg --list-keys 8B3F1AA2 || /usr/bin/gpg --keyserver pgp.mit.edu --recv-keys 8B3F1AA2
+        /usr/bin/apt-key list | /bin/grep 8B3F1AA2 || /usr/bin/gpg --export -a  8B3F1AA2 | apt-key add -
+        grep -q apt.websages.com /etc/apt/sources.list ||
+            echo "deb http://apt.websages.com/ squeeze-wcyd main" >> /etc/apt/sources.list
+        apt-get update
+        apt-get install -y --force-yes facter/squeeze-wcyd
+    fi
+fi
+
 # Other facts
 export FACTERLIB=$FACTERLIB:/var/cache/git/puppet-strings/facts
 
